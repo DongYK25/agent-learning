@@ -1,6 +1,23 @@
-# DeepSeek 最小 Agent 示例
+# DeepSeek Agent（V0.2 模块化）
 
-聊天 + 天气 Tool（本地 `localhost:8091`）+ 会话历史。
+聊天 + 天气 Tool（本地天气服务）+ Session / Memory + 会话历史。
+
+## 目录结构
+
+```
+agent/
+  main.py           # 入口与 Agent 循环
+  config.py         # 环境变量
+  session.py        # Session（session_id → memory / setting）
+  logger.py         # 结构化 Debug 日志
+  llm/client.py     # LLM 客户端
+  memory/history.py # Memory（add_user / add_assistant / add_tool）
+  tool/
+    weather.py      # WeatherTool（schema + execute）
+    registry.py     # 注册表，自动生成 tools 列表
+  prompt/
+    assistant.txt   # 系统提示词（可换成 coder / planner）
+```
 
 ## 准备
 
@@ -24,6 +41,8 @@ copy .env.example .env
 
 ```bash
 python agent.py
+# 或
+python -m agent.main
 ```
 
 试试：
@@ -36,7 +55,10 @@ python agent.py
 
 | 概念 | 对应位置 |
 |------|----------|
-| 会话历史 | `messages` 列表整段对话累积 |
-| Tool 定义 | `TOOLS`，描述给模型看 |
-| Tool 执行 | `run_tool` → 请求你的天气 API |
-| Agent 循环 | `chat_once` 里的 `while`：有 tool_calls 就继续 |
+| Session | `session.py`，每人/每次对话一个 `session_id` |
+| Memory | `memory/history.py`，Agent 不直接改 messages |
+| Tool 抽象 | `tool/weather.py` 的 `schema` + `execute` |
+| Tool 注册 | `tool/registry.py`，新 Tool 注册即可 |
+| Prompt | `prompt/*.txt`，可按角色切换 |
+| Agent 循环 | `main.py` 的 `chat_once`：有 tool_calls 就继续 |
+| Debug 日志 | `logger.py` + `agent.log`（USER / LLM / Tool 分段） |
