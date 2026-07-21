@@ -11,7 +11,8 @@ agent/
   session.py        # Session（session_id → memory / setting）
   logger.py         # 结构化 Debug 日志
   llm/client.py     # LLM 客户端
-  memory/history.py # Memory（add_user / add_assistant / add_tool）
+  memory/history.py # 内存版 Memory（调试）
+  memory/postgres.py# PgMemory（sessions + messages）
   tool/
     weather.py      # WeatherTool（schema + execute）
     registry.py     # 注册表，自动生成 tools 列表
@@ -33,9 +34,11 @@ pip install -r requirements.txt
 copy .env.example .env
 ```
 
-编辑 `.env`，填入 `DEEPSEEK_API_KEY`。
+编辑 `.env`，填入 `DEEPSEEK_API_KEY`，并按需改 `DATABASE_URL`（默认 `127.0.0.1:5432/server`）。
 
-3. 确保天气服务已启动：`http://localhost:8091/weather?city=北京`
+3. PostgreSQL 已建好 `sessions`、`messages` 表（见对话中的 DDL）。
+
+4. 确保天气服务已启动：`http://localhost:8091/weather?city=北京`
 
 ## 运行
 
@@ -56,7 +59,7 @@ python -m agent.main
 | 概念 | 对应位置 |
 |------|----------|
 | Session | `session.py`，每人/每次对话一个 `session_id` |
-| Memory | `memory/history.py`，Agent 不直接改 messages |
+| Memory | `memory/postgres.py`，会话消息落 PG；Agent 不直接改 messages |
 | Tool 抽象 | `tool/weather.py` 的 `schema` + `execute` |
 | Tool 注册 | `tool/registry.py`，新 Tool 注册即可 |
 | Prompt | `prompt/*.txt`，可按角色切换 |

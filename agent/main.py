@@ -20,7 +20,7 @@ if __name__ == "__main__" and __package__ is None:
 from agent import config
 from agent.llm import LLMClient
 from agent.logger import AgentLogger
-from agent.memory import Memory
+from agent.memory import PgMemory
 from agent.prompt import load_prompt
 from agent.session import Session, SessionSetting
 from agent.tool.registry import ToolRegistry, build_default_registry
@@ -52,10 +52,13 @@ def chat_once(
 
 
 def main() -> None:
-    memory = Memory()
-    session = Session(
-        memory=memory,
-        setting=SessionSetting(prompt_name=config.DEFAULT_PROMPT),
+    memory = PgMemory()
+    setting = SessionSetting(prompt_name=config.DEFAULT_PROMPT)
+    session = Session(memory=memory, setting=setting)
+    memory.ensure_session(
+        session.session_id,
+        prompt_name=setting.prompt_name,
+        model=setting.model,
     )
     session.add_system(load_prompt(session.setting.prompt_name))
 
@@ -66,28 +69,32 @@ def main() -> None:
     print("DeepSeek Agent 已启动（输入 quit 退出）")
     print(f"模型: {llm.model}")
     print(f"天气服务: {config.WEATHER_API_URL}")
-    print(f"session: {session.session_id}\n")
+    print(f"session: {session.session_id}")
+    print(f"memory: PostgreSQL ({config.DATABASE_URL.split('@')[-1]})\n")
 
-    while True:
-        try:
-            user_input = input("你: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\n再见。")
-            break
+    try:
+        while True:
+            try:
+                user_input = input("你: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print("\n再见。")
+                break
 
-        if not user_input:
-            continue
-        if user_input.lower() in {"quit", "exit", "q"}:
-            print("再见。")
-            break
+            if not user_input:
+                continue
+            if user_input.lower() in {"quit", "exit", "q"}:
+                print("再见。")
+                break
 
-        session.add_user(user_input)
-        agent_log.user(user_input)
-        try:
-            chat_once(session, llm, registry, agent_log)
-        except Exception as e:
-            session.pop_last()
-            print(f"出错: {e}\n")
+            session.add_user(user_input)
+            agent_log.user(user_input)
+            try:
+                chat_once(session, llm, registry, agent_log)
+            except Exception as e:
+                session.pop_last()
+                print(f"出错: {e}\n")
+    finally:
+        memory.close()
 
 
 if __name__ == "__main__":

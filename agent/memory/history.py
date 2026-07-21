@@ -6,7 +6,7 @@ from typing import Any
 
 
 class Memory:
-    """内存版 Memory。以后可换成 SQLite / PostgreSQL / Redis / Summary。"""
+    """内存版 Memory（调试用）。生产默认见 postgres.PgMemory。"""
 
     def __init__(self) -> None:
         self._store: dict[str, list[dict[str, Any]]] = {}

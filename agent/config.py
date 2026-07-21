@@ -16,6 +16,12 @@ WEATHER_API_URL = os.getenv("WEATHER_API_URL", "http://localhost:8091/weather")
 DEFAULT_PROMPT = os.getenv("DEFAULT_PROMPT", "assistant")
 LOG_FILE = os.getenv("AGENT_LOG_FILE", "agent.log")
 
+# PostgreSQL：默认 127.0.0.1:5432/server
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "postgresql://postgres:postgres@127.0.0.1:5432/server",
+)
+
 
 def require_api_key() -> str:
     if not DEEPSEEK_API_KEY:

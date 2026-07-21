@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 from uuid import uuid4
 
-from agent.memory import Memory
+
+class MemoryLike(Protocol):
+    def load(self, session_id: str) -> list[dict[str, Any]]: ...
+    def add_system(self, session_id: str, content: str) -> None: ...
+    def add_user(self, session_id: str, content: str) -> None: ...
+    def add_assistant(self, session_id: str, message: Any) -> None: ...
+    def add_tool(self, session_id: str, tool_call_id: str, content: str) -> None: ...
+    def pop_last(self, session_id: str) -> dict[str, Any] | None: ...
 
 
 @dataclass
@@ -17,7 +24,7 @@ class SessionSetting:
 
 @dataclass
 class Session:
-    memory: Memory
+    memory: MemoryLike
     setting: SessionSetting = field(default_factory=SessionSetting)
     session_id: str = field(default_factory=lambda: str(uuid4()))
 
