@@ -26,4 +26,7 @@ class LLMClient:
         }
         if tools:
             kwargs["tools"] = tools
-        return self.client.chat.completions.create(**kwargs)
+        return self.client.chat.completions.create(
+            timeout=config.LLM_TIMEOUT_SECONDS,
+            **kwargs,
+        )

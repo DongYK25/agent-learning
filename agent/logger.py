@@ -61,3 +61,29 @@ class AgentLogger:
             result,
             _SEP,
         )
+
+    def loop_step(self, step: int, max_steps: int, status: str) -> None:
+        self._log.info(
+            "\n[LOOP]\nstep=%s/%s status=%s\n%s",
+            step,
+            max_steps,
+            status,
+            _SEP,
+        )
+
+    def loop_stop(
+        self,
+        step: int,
+        max_steps: int,
+        reason: str,
+        detail: str | None = None,
+    ) -> None:
+        extra = f"\n{detail}" if detail else ""
+        self._log.info(
+            "\n[LOOP]\nstop step=%s/%s reason=%s%s\n%s",
+            step,
+            max_steps,
+            reason,
+            extra,
+            _SEP,
+        )

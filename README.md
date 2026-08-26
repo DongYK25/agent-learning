@@ -1,6 +1,8 @@
-# DeepSeek Agent（V0.2 模块化）
+# DeepSeek Agent（v0.3 循环加固）
 
 聊天 + 天气 Tool（本地天气服务）+ Session / Memory + 会话历史。
+
+v0.3：Agent 循环有步数上限和连续失败护栏；Tool 失败回写成消息，不把进程打挂。
 
 ## 目录结构
 
@@ -54,6 +56,12 @@ python -m agent.main
 - `那上海呢？` → 利用会话历史，再查上海
 - `1+1等于几？` → 不调工具，直接回答
 
+护栏验收（对照 `docs/TUTORIAL.md` v0.3）：
+
+- 把 `AGENT_MAX_STEPS` 设成 `2` 再连问天气 → 有限步内停止，终端/`agent.log` 有 `reason=max_steps`
+- 停掉天气服务再问北京天气 → 不崩溃，会话还能继续问 `1+1`
+- 失败后历史里不应出现「assistant 带了 tool_calls 却没有对应 tool 消息」
+
 ## 代码在学什么
 
 | 概念 | 对应位置 |
@@ -63,5 +71,5 @@ python -m agent.main
 | Tool 抽象 | `tool/weather.py` 的 `schema` + `execute` |
 | Tool 注册 | `tool/registry.py`，新 Tool 注册即可 |
 | Prompt | `prompt/*.txt`，可按角色切换 |
-| Agent 循环 | `main.py` 的 `chat_once`：有 tool_calls 就继续 |
-| Debug 日志 | `logger.py` + `agent.log`（USER / LLM / Tool 分段） |
+| Agent 循环 | `main.py` 的 `chat_once`：max steps / 连续失败则停 |
+| Debug 日志 | `logger.py` + `agent.log`（USER / LLM / Tool / LOOP 分段） |

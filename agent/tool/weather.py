@@ -34,16 +34,26 @@ class WeatherTool:
         }
 
     def execute(self, city: str) -> str:
-        try:
-            resp = requests.get(
-                config.WEATHER_API_URL,
-                params={"city": city},
-                timeout=10,
-            )
-            resp.raise_for_status()
+        # GET 查询幂等：超时/网络抖动时有限次重试；循环层不会再重试。
+        last_error: str | None = None
+        attempts = config.TOOL_MAX_ATTEMPTS
+        for attempt in range(1, attempts + 1):
             try:
-                return json.dumps(resp.json(), ensure_ascii=False)
-            except ValueError:
-                return resp.text
-        except requests.RequestException as e:
-            return json.dumps({"error": str(e)}, ensure_ascii=False)
+                resp = requests.get(
+                    config.WEATHER_API_URL,
+                    params={"city": city},
+                    timeout=10,
+                )
+                resp.raise_for_status()
+                try:
+                    return json.dumps(resp.json(), ensure_ascii=False)
+                except ValueError:
+                    return resp.text
+            except requests.RequestException as e:
+                last_error = str(e)
+                if attempt >= attempts:
+                    break
+        return json.dumps(
+            {"error": "upstream", "message": last_error or "天气服务不可用"},
+            ensure_ascii=False,
+        )
