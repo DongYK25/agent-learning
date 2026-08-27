@@ -1,8 +1,8 @@
-# DeepSeek Agent（v0.3 循环加固）
+# DeepSeek Agent（v0.4 Tool 工程化）
 
-聊天 + 天气 Tool（本地天气服务）+ Session / Memory + 会话历史。
+聊天 + 天气 / 时间 Tool + Session / Memory + 循环护栏。
 
-v0.3：Agent 循环有步数上限和连续失败护栏；Tool 失败回写成消息，不把进程打挂。
+v0.4：把 Tool 当后端接口——Pydantic 校验、统一 ToolResult、返回截断；加第二个 Tool 不用改循环。
 
 ## 目录结构
 
@@ -16,8 +16,11 @@ agent/
   memory/history.py # 内存版 Memory（调试）
   memory/postgres.py# PgMemory（sessions + messages）
   tool/
-    weather.py      # WeatherTool（schema + execute）
-    registry.py     # 注册表，自动生成 tools 列表
+    weather.py      # WeatherTool（Pydantic 参数 + execute）
+    time.py         # TimeTool（对照：加 Tool 只注册）
+    result.py       # 统一 ToolResult
+    schema.py       # Pydantic → OpenAI function schema
+    registry.py     # 校验 / 重试 / 截断 / 只读并行
   prompt/
     assistant.txt   # 系统提示词（可换成 coder / planner）
 ```
@@ -53,14 +56,16 @@ python -m agent.main
 试试：
 
 - `北京天气怎么样？` → 应触发 `get_weather`
+- `现在几点？` → 应触发 `get_current_time`（不改 `chat_once`）
+- `北京天气，顺便现在几点` → 一轮两个只读 Tool，可并发
 - `那上海呢？` → 利用会话历史，再查上海
 - `1+1等于几？` → 不调工具，直接回答
 
-护栏验收（对照 `docs/TUTORIAL.md` v0.3）：
+验收（对照 `docs/TUTORIAL.md` v0.4）：
 
-- 把 `AGENT_MAX_STEPS` 设成 `2` 再连问天气 → 有限步内停止，终端/`agent.log` 有 `reason=max_steps`
-- 停掉天气服务再问北京天气 → 不崩溃，会话还能继续问 `1+1`
-- 失败后历史里不应出现「assistant 带了 tool_calls 却没有对应 tool 消息」
+- 模型传空城市 / 过长城市 → `validation_error` 回给模型，终端无 Python traceback
+- 停掉天气服务 → `upstream_error` 或 `timeout`，会话可继续
+- 新 Tool 只新增模块并 `register`，不改循环主流程
 
 ## 代码在学什么
 
@@ -68,8 +73,10 @@ python -m agent.main
 |------|----------|
 | Session | `session.py`，每人/每次对话一个 `session_id` |
 | Memory | `memory/postgres.py`，会话消息落 PG；Agent 不直接改 messages |
-| Tool 抽象 | `tool/weather.py` 的 `schema` + `execute` |
+| JSON Schema / Pydantic | `tool/weather.py` 的 `WeatherArgs`；schema 由模型生成 |
+| ToolResult | `tool/result.py`：ok / validation_error / timeout / upstream_error |
 | Tool 注册 | `tool/registry.py`，新 Tool 注册即可 |
-| Prompt | `prompt/*.txt`，可按角色切换 |
+| 并行 tool_calls | 全部 `parallel_safe` 时 `execute_many` 并发，否则串行 |
+| 幂等 | 仅 `idempotent=True` 的超时/上游错误由 Registry 重试 |
 | Agent 循环 | `main.py` 的 `chat_once`：max steps / 连续失败则停 |
 | Debug 日志 | `logger.py` + `agent.log`（USER / LLM / Tool / LOOP 分段） |

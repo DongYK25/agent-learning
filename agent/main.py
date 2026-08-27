@@ -4,7 +4,7 @@ Agent 入口：Session + Memory + Tool Registry + LLM 循环。
 流程：
 1. 用户输入 → session.add_user()
 2. 调用 LLM（带 registry.schemas）
-3. 若模型要求调工具 → registry.execute → session.add_tool() → 再问模型
+3. 若模型要求调工具 → registry.execute_many → session.add_tool() → 再问模型
 4. 得到最终自然语言回答，或被 max steps / 连续失败护栏打断
 """
 
@@ -42,7 +42,11 @@ def _tool_result_is_error(result: str) -> bool:
         data = json.loads(result)
     except (json.JSONDecodeError, TypeError):
         return False
-    return isinstance(data, dict) and bool(data.get("error"))
+    if not isinstance(data, dict):
+        return False
+    if "ok" in data:
+        return data["ok"] is False
+    return bool(data.get("error"))
 
 
 def _close_turn(session: Session, agent_log: AgentLogger, text: str) -> None:
@@ -97,20 +101,42 @@ def chat_once(
             return
 
         # 5) 写入带 tool_calls 的 assistant，随后必须配齐全部 tool 消息。
+        # 一轮多个 tool_calls：全部 parallel_safe（只读）则 Registry 内并发；
+        # 任一写操作 / 有先后依赖则整批串行。Memory 仍按原始顺序 add_tool。
         session.add_assistant(msg)
         agent_log.loop_step(step, max_steps, "tool_calls")
         agent_log.llm_tool_calls(msg.tool_calls)
         print(f"  [step {step}/{max_steps}]")
 
-        for tc in msg.tool_calls:
-            try:
-                result = registry.execute(tc.function.name, tc.function.arguments)
-            except Exception as e:
-                # Registry 已兜底；这里再防一层，保证每条 tool_call_id 都有结果。
-                result = json.dumps(
-                    {"error": "execute_failed", "message": str(e)},
-                    ensure_ascii=False,
-                )
+        try:
+            results = registry.execute_many(
+                [(tc.function.name, tc.function.arguments) for tc in msg.tool_calls]
+            )
+        except Exception as e:
+            fallback = json.dumps(
+                {
+                    "ok": False,
+                    "status": "execute_failed",
+                    "error": str(e),
+                    "truncated": False,
+                },
+                ensure_ascii=False,
+            )
+            results = [fallback] * len(msg.tool_calls)
+
+        if len(results) != len(msg.tool_calls):
+            pad = json.dumps(
+                {
+                    "ok": False,
+                    "status": "execute_failed",
+                    "error": "tool 结果数量与 tool_calls 不一致",
+                    "truncated": False,
+                },
+                ensure_ascii=False,
+            )
+            results = (list(results) + [pad] * len(msg.tool_calls))[: len(msg.tool_calls)]
+
+        for tc, result in zip(msg.tool_calls, results):
             agent_log.tool(tc.function.name, tc.function.arguments, result)
             print(f"  [tool] {tc.function.name}({tc.function.arguments})")
             session.add_tool(tc.id, result)
@@ -160,7 +186,7 @@ def main() -> None:
     session.add_system(load_prompt(session.setting.prompt_name))
 
     llm = LLMClient()  # 读 .env 里的 API Key / 模型名，后面 chat_once 用它调模型
-    registry = build_default_registry()  # 目前注册 WeatherTool；schemas 会交给模型
+    registry = build_default_registry()  # WeatherTool + TimeTool；schemas 交给模型
     agent_log = AgentLogger()  # 终端 print 给人看，文件日志给排错看
 
     print("DeepSeek Agent 已启动（输入 quit 退出）")

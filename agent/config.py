@@ -34,8 +34,10 @@ def _int_env(name: str, default: int) -> int:
 MAX_STEPS = max(1, _int_env("AGENT_MAX_STEPS", 8))
 MAX_CONSECUTIVE_TOOL_ERRORS = max(1, _int_env("AGENT_MAX_CONSECUTIVE_TOOL_ERRORS", 3))
 LLM_TIMEOUT_SECONDS = max(1, _int_env("AGENT_LLM_TIMEOUT_SECONDS", 60))
-# 天气 GET 幂等，允许有限次重试（总尝试次数，含第一次）。
+# 幂等 Tool 总尝试次数（含第一次）。非幂等只执行一次。
 TOOL_MAX_ATTEMPTS = max(1, _int_env("AGENT_TOOL_MAX_ATTEMPTS", 2))
+TOOL_TIMEOUT_SECONDS = max(1, _int_env("AGENT_TOOL_TIMEOUT_SECONDS", 10))
+TOOL_RESULT_MAX_CHARS = max(256, _int_env("AGENT_TOOL_RESULT_MAX_CHARS", 4000))
 
 
 def require_api_key() -> str:
