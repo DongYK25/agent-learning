@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>agent-learning v0.5</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: sans-serif; max-width: 720px; margin: 24px auto; padding: 0 16px; }
+    h1 { font-size: 1.2rem; }
+    .meta { font-size: 0.85rem; opacity: 0.75; margin-bottom: 12px; word-break: break-all; }
+    #log { border: 1px solid #8884; border-radius: 8px; min-height: 280px; padding: 12px; overflow-y: auto; }
+    .msg { margin: 8px 0; white-space: pre-wrap; }
+    .user { font-weight: 600; }
+    .assistant { }
+    form { display: flex; gap: 8px; margin-top: 12px; }
+    input[type="text"] { flex: 1; padding: 8px; }
+    button { padding: 8px 12px; }
+  </style>
+</head>
+<body>
+  <h1>天气助手（多会话）</h1>
+  <div class="meta">
+    session: <code id="sid">（创建中…）</code>
+    <button type="button" id="new">新会话</button>
+    · 再开一个标签页就是另一个 session，历史不会串。
+  </div>
+  <div id="log"></div>
+  <form id="form">
+    <input id="q" type="text" placeholder="北京天气怎么样？" autocomplete="off" required />
+    <button type="submit">发送</button>
+  </form>
+  <script>
+    const logEl = document.getElementById("log");
+    const sidEl = document.getElementById("sid");
+    const qEl = document.getElementById("q");
+    let sessionId = null;
+    let busy = false;
+
+    function line(role, text) {
+      const div = document.createElement("div");
+      div.className = "msg " + role;
+      div.textContent = (role === "user" ? "你: " : "助手: ") + text;
+      logEl.appendChild(div);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    async function createSession() {
+      logEl.innerHTML = "";
+      sidEl.textContent = "（创建中…）";
+      const res = await fetch("/sessions", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      sessionId = data.session_id;
+      sidEl.textContent = sessionId;
+    }
+
+    document.getElementById("new").onclick = () => createSession().catch((e) => line("assistant", String(e)));
+
+    document.getElementById("form").onsubmit = async (ev) => {
+      ev.preventDefault();
+      if (!sessionId || busy) return;
+      const text = qEl.value.trim();
+      if (!text) return;
+      busy = true;
+      qEl.value = "";
+      line("user", text);
+      try {
+        const res = await fetch("/sessions/" + sessionId + "/messages", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: text }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+        line("assistant", data.reply);
+      } catch (e) {
+        line("assistant", String(e));
+      } finally {
+        busy = false;
+        qEl.focus();
+      }
+    };
+
+    createSession().catch((e) => line("assistant", String(e)));
+  </script>
+</body>
+</html>

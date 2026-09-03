@@ -1,82 +1,70 @@
-# DeepSeek Agent（v0.4 Tool 工程化）
+# DeepSeek Agent（v0.5 HTTP + 多用户 Session）
 
-聊天 + 天气 / 时间 Tool + Session / Memory + 循环护栏。
+聊天 + 天气 / 时间 Tool + Session / Memory。HTTP 无状态，历史在 PostgreSQL；客户端持有 `session_id`。
 
-v0.4：把 Tool 当后端接口——Pydantic 校验、统一 ToolResult、返回截断；加第二个 Tool 不用改循环。
+v0.5：FastAPI 暴露创建会话 / 发消息 / 拉历史。CLI 仍可作调试。
 
 ## 目录结构
 
 ```
 agent/
-  main.py           # 入口与 Agent 循环
-  config.py         # 环境变量
-  session.py        # Session（session_id → memory / setting）
-  logger.py         # 结构化 Debug 日志
-  llm/client.py     # LLM 客户端
-  memory/history.py # 内存版 Memory（调试）
-  memory/postgres.py# PgMemory（sessions + messages）
-  tool/
-    weather.py      # WeatherTool（Pydantic 参数 + execute）
-    time.py         # TimeTool（对照：加 Tool 只注册）
-    result.py       # 统一 ToolResult
-    schema.py       # Pydantic → OpenAI function schema
-    registry.py     # 校验 / 重试 / 截断 / 只读并行
-  prompt/
-    assistant.txt   # 系统提示词（可换成 coder / planner）
+  api.py            # FastAPI：/sessions、/messages
+  static/index.html # 最小前端（可开两个标签页对照）
+  main.py           # CLI 与 Agent 循环
+  ...
 ```
 
 ## 准备
 
-1. 安装依赖：
-
 ```bash
 pip install -r requirements.txt
-```
-
-2. 复制环境变量并填入 Key：
-
-```bash
 copy .env.example .env
 ```
 
-编辑 `.env`，填入 `DEEPSEEK_API_KEY`，并按需改 `DATABASE_URL`（默认 `127.0.0.1:5432/server`）。
-
-3. PostgreSQL 已建好 `sessions`、`messages` 表（见对话中的 DDL）。
-
-4. 确保天气服务已启动：`http://localhost:8091/weather?city=北京`
+填入 `DEEPSEEK_API_KEY`，确认 PostgreSQL 的 `sessions` / `messages` 表和天气服务可用。
 
 ## 运行
 
+HTTP（产品形态）：
+
 ```bash
-python agent.py
+python -m agent.api
 # 或
-python -m agent.main
+uvicorn agent.api:app --host 127.0.0.1 --port 8090
 ```
 
-试试：
+打开 http://127.0.0.1:8000/ ，或用 curl：
 
-- `北京天气怎么样？` → 应触发 `get_weather`
-- `现在几点？` → 应触发 `get_current_time`（不改 `chat_once`）
-- `北京天气，顺便现在几点` → 一轮两个只读 Tool，可并发
-- `那上海呢？` → 利用会话历史，再查上海
-- `1+1等于几？` → 不调工具，直接回答
+```bash
+curl -s -X POST http://127.0.0.1:8000/sessions -H "Content-Type: application/json" -d "{}"
+# 记下 session_id
 
-验收（对照 `docs/TUTORIAL.md` v0.4）：
+curl -s -X POST http://127.0.0.1:8000/sessions/<session_id>/messages ^
+  -H "Content-Type: application/json" ^
+  -d "{\"content\":\"北京天气怎么样？\"}"
 
-- 模型传空城市 / 过长城市 → `validation_error` 回给模型，终端无 Python traceback
-- 停掉天气服务 → `upstream_error` 或 `timeout`，会话可继续
-- 新 Tool 只新增模块并 `register`，不改循环主流程
+curl -s http://127.0.0.1:8000/sessions/<session_id>/messages
+```
+
+两个 session 交叉提问，历史不得串台。重启 uvicorn 后，用原来的 `session_id` 问「那上海呢？」应仍能接上。
+
+CLI 调试：
+
+```bash
+python agent.py
+```
+
+## 已知缺口（本版承认，不修）
+
+- **同步阻塞：** 一次用户消息可能多步 LLM↔Tool，HTTP 要等整段结束。代理/浏览器可能先超时。v0.6 用流式（SSE）改善体感。
+- **无鉴权：** 知道 `session_id` 就能读写。v1.0 再加 API Key。
+- **无流式 / 无 RAG。**
 
 ## 代码在学什么
 
 | 概念 | 对应位置 |
 |------|----------|
-| Session | `session.py`，每人/每次对话一个 `session_id` |
-| Memory | `memory/postgres.py`，会话消息落 PG；Agent 不直接改 messages |
-| JSON Schema / Pydantic | `tool/weather.py` 的 `WeatherArgs`；schema 由模型生成 |
-| ToolResult | `tool/result.py`：ok / validation_error / timeout / upstream_error |
-| Tool 注册 | `tool/registry.py`，新 Tool 注册即可 |
-| 并行 tool_calls | 全部 `parallel_safe` 时 `execute_many` 并发，否则串行 |
-| 幂等 | 仅 `idempotent=True` 的超时/上游错误由 Registry 重试 |
-| Agent 循环 | `main.py` 的 `chat_once`：max steps / 连续失败则停 |
-| Debug 日志 | `logger.py` + `agent.log`（USER / LLM / Tool / LOOP 分段） |
+| Session ID | 客户端保存，每次请求带上；`POST /sessions` 创建 |
+| 多租户（入门） | 按 `session_id` 隔离，不串历史 |
+| 无状态 HTTP vs 有状态会话 | 接口不记进程内存；`PgMemory` 每条操作独立连 PG |
+| Agent 循环 | `main.py` 的 `chat_once` / `run_user_turn`，HTTP 与 CLI 共用 |

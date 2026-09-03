@@ -10,6 +10,30 @@ class Memory:
 
     def __init__(self) -> None:
         self._store: dict[str, list[dict[str, Any]]] = {}
+        self._sessions: dict[str, dict[str, Any]] = {}
+
+    def session_exists(self, session_id: str) -> bool:
+        return session_id in self._sessions
+
+    def get_session(self, session_id: str) -> dict[str, Any] | None:
+        meta = self._sessions.get(session_id)
+        if meta is None:
+            return None
+        return {"id": session_id, **meta}
+
+    def ensure_session(
+        self,
+        session_id: str,
+        *,
+        prompt_name: str | None = None,
+        model: str | None = None,
+    ) -> None:
+        current = self._sessions.get(session_id, {})
+        self._sessions[session_id] = {
+            "prompt_name": prompt_name or current.get("prompt_name") or "assistant",
+            "model": model if model is not None else current.get("model"),
+        }
+        self._store.setdefault(session_id, [])
 
     def load(self, session_id: str) -> list[dict[str, Any]]:
         return list(self._store.get(session_id, []))
@@ -56,4 +80,7 @@ class Memory:
         return msgs.pop()
 
     def _append(self, session_id: str, message: dict[str, Any]) -> None:
+        self._sessions.setdefault(
+            session_id, {"prompt_name": "assistant", "model": None}
+        )
         self._store.setdefault(session_id, []).append(message)

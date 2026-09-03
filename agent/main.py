@@ -23,7 +23,6 @@ if __name__ == "__main__" and __package__ is None:
 from agent import config  # 环境变量：API Key、模型名、数据库 URL、天气服务地址
 from agent.llm import LLMClient  # 封装 DeepSeek / OpenAI 兼容的 chat.completions
 from agent.logger import AgentLogger  # 把 USER / LLM / Tool 分段写进 agent.log
-from agent.memory import PgMemory  # PostgreSQL 持久化对话历史
 from agent.prompt import load_prompt  # 从 agent/prompt/*.txt 读 system prompt
 from agent.session import Session, SessionSetting  # 会话对象：不直接碰 messages 列表
 from agent.tool.registry import ToolRegistry, build_default_registry  # 工具注册与执行
@@ -49,10 +48,18 @@ def _tool_result_is_error(result: str) -> bool:
     return bool(data.get("error"))
 
 
-def _close_turn(session: Session, agent_log: AgentLogger, text: str) -> None:
+def _close_turn(
+    session: Session,
+    agent_log: AgentLogger,
+    text: str,
+    *,
+    echo: bool,
+) -> str:
     session.add_assistant({"role": "assistant", "content": text})
     agent_log.llm_reply(text)
-    print(f"助手: {text}\n")
+    if echo:
+        print(f"助手: {text}\n")
+    return text
 
 
 def chat_once(
@@ -60,8 +67,10 @@ def chat_once(
     llm: LLMClient,
     registry: ToolRegistry,
     agent_log: AgentLogger,
-) -> None:
-    """一轮用户输入对应的 Agent 循环：有限步内结束；Tool 失败回写成消息而不是崩溃。"""
+    *,
+    echo: bool = True,
+) -> str:
+    """一轮用户输入对应的 Agent 循环：有限步内结束；返回最终助手文本。"""
     max_steps = config.MAX_STEPS
     max_consecutive = config.MAX_CONSECUTIVE_TOOL_ERRORS
     consecutive_errors = 0
@@ -78,8 +87,7 @@ def chat_once(
                 # 还没有任何 assistant：撤回 user，避免空问句留在历史里。
                 raise LoopAborted(str(e)) from e
             # 已有完整的 LLM↔Tool 轮次：补一句人话收尾，协议保持完整。
-            _close_turn(session, agent_log, _MSG_LLM_ERROR)
-            return
+            return _close_turn(session, agent_log, _MSG_LLM_ERROR, echo=echo)
 
         # 2) OpenAI 兼容协议：choices[0].message 才是这一轮助手回复。
         msg = response.choices[0].message
@@ -89,16 +97,18 @@ def chat_once(
             session.add_assistant(msg)
             agent_log.loop_step(step, max_steps, "final")
             agent_log.llm_reply(msg.content)
-            print(f"助手: {msg.content}\n")
-            return
+            text = msg.content or ""
+            if echo:
+                print(f"助手: {text}\n")
+            return text
 
         # 4) 已是最后一步仍要调工具：不要写入这条 tool_calls（否则缺 tool 结果会污染协议）。
         if step >= max_steps:
             agent_log.llm_tool_calls(msg.tool_calls)
             agent_log.loop_stop(step, max_steps, "max_steps")
-            print(f"  [stop] max_steps at step {step}/{max_steps}")
-            _close_turn(session, agent_log, _MSG_MAX_STEPS)
-            return
+            if echo:
+                print(f"  [stop] max_steps at step {step}/{max_steps}")
+            return _close_turn(session, agent_log, _MSG_MAX_STEPS, echo=echo)
 
         # 5) 写入带 tool_calls 的 assistant，随后必须配齐全部 tool 消息。
         # 一轮多个 tool_calls：全部 parallel_safe（只读）则 Registry 内并发；
@@ -106,7 +116,8 @@ def chat_once(
         session.add_assistant(msg)
         agent_log.loop_step(step, max_steps, "tool_calls")
         agent_log.llm_tool_calls(msg.tool_calls)
-        print(f"  [step {step}/{max_steps}]")
+        if echo:
+            print(f"  [step {step}/{max_steps}]")
 
         try:
             results = registry.execute_many(
@@ -138,7 +149,8 @@ def chat_once(
 
         for tc, result in zip(msg.tool_calls, results):
             agent_log.tool(tc.function.name, tc.function.arguments, result)
-            print(f"  [tool] {tc.function.name}({tc.function.arguments})")
+            if echo:
+                print(f"  [tool] {tc.function.name}({tc.function.arguments})")
             session.add_tool(tc.id, result)
             if _tool_result_is_error(result):
                 consecutive_errors += 1
@@ -153,20 +165,41 @@ def chat_once(
                 "consecutive_tool_errors",
                 f"consecutive={consecutive_errors}",
             )
-            print(
-                f"  [stop] consecutive_tool_errors={consecutive_errors} "
-                f"at step {step}/{max_steps}"
-            )
-            _close_turn(session, agent_log, _MSG_CONSECUTIVE)
-            return
+            if echo:
+                print(
+                    f"  [stop] consecutive_tool_errors={consecutive_errors} "
+                    f"at step {step}/{max_steps}"
+                )
+            return _close_turn(session, agent_log, _MSG_CONSECUTIVE, echo=echo)
 
         # 7) while 继续：带着工具结果再问模型。
+
+
+def run_user_turn(
+    session: Session,
+    llm: LLMClient,
+    registry: ToolRegistry,
+    agent_log: AgentLogger,
+    user_input: str,
+    *,
+    echo: bool = True,
+) -> str:
+    """写入 user 消息并跑完 Agent 循环。第一次 LLM 失败时撤回 user。"""
+    session.add_user(user_input)
+    agent_log.user(user_input)
+    try:
+        return chat_once(session, llm, registry, agent_log, echo=echo)
+    except LoopAborted:
+        session.pop_last()
+        raise
 
 
 def main() -> None:
     # —— 启动时只做一次：搭好 Memory / Session / LLM / 工具 / 日志 ——
 
     # 连上 PostgreSQL。后续所有 add_* / load 都走这张表，进程退出前要 close。
+    from agent.memory import PgMemory  # PostgreSQL 持久化对话历史
+
     memory = PgMemory()
 
     # 本会话用哪份 system prompt、默认模型（可被 SessionSetting 覆盖）。
@@ -217,13 +250,9 @@ def main() -> None:
                 break
 
             # 用户话先入库，再进 Agent 循环。仅第一次 LLM 失败时才 pop_last。
-            session.add_user(user_input)
-            agent_log.user(user_input)
             try:
-                chat_once(session, llm, registry, agent_log)
+                run_user_turn(session, llm, registry, agent_log, user_input)
             except LoopAborted as e:
-                # 第一次 LLM 调用失败：本轮还没有 assistant，撤回 user。
-                session.pop_last()
                 print(f"出错: {e}\n")
             except Exception as e:
                 # 已写入过 assistant/tool 时不要 pop_last，避免拆掉成对的 tool_calls。

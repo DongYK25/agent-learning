@@ -39,6 +39,9 @@ TOOL_MAX_ATTEMPTS = max(1, _int_env("AGENT_TOOL_MAX_ATTEMPTS", 2))
 TOOL_TIMEOUT_SECONDS = max(1, _int_env("AGENT_TOOL_TIMEOUT_SECONDS", 10))
 TOOL_RESULT_MAX_CHARS = max(256, _int_env("AGENT_TOOL_RESULT_MAX_CHARS", 4000))
 
+HTTP_HOST = os.getenv("AGENT_HTTP_HOST", "127.0.0.1")
+HTTP_PORT = max(1, _int_env("AGENT_HTTP_PORT", 8000))
+
 
 def require_api_key() -> str:
     if not DEEPSEEK_API_KEY:
